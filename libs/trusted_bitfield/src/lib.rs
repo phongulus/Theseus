@@ -15,12 +15,11 @@
 use prusti_contracts::*;
 use core::sync::atomic::Ordering;
 
-const U64_MAX: u64 = 18_446_744_073_709_551_615u64;
-
 #[cfg(prusti)]
 mod external_spec;
 
 #[cfg(prusti)]
+#[allow(unused_imports)]
 use external_spec::{trusted_option::*, trusted_num::*};
 
 #[cfg(not(prusti))]
@@ -28,7 +27,7 @@ use core::{sync::atomic::AtomicU64, option::Option, option::Option::*};
 
 #[cfg(prusti)]
 #[derive(Clone, Copy)]
-#[invariant(self.0 <= U64_MAX)]
+#[invariant(self.0 <= u64::MAX)]
 struct AtomicU64(u64);
 
 #[cfg(prusti)]
@@ -81,12 +80,13 @@ fn new_verified_dealloc_addr(addr: usize) -> VerifiedDeallocAddr {
 
 // Basic bitfield operations with properties verified externally with Verus.
 
+#[allow(dead_code)]
 #[pure]
 #[trusted]
 #[requires(k < 64)]
 #[ensures(k == 0 ==> result == 1)]
 #[ensures(result > 0)]  // This is the case when k < 64, as the single 1 cannot be shifted out.
-#[ensures(result < U64_MAX)]  // Follows from U64_MAX being a sum of unique powers of 2
+#[ensures(result < u64::MAX)]  // Follows from u64::MAX being a sum of unique powers of 2
 fn power_of_two_u64(k: usize) -> u64 {
     1 << (k as u64)
 }
@@ -94,8 +94,8 @@ fn power_of_two_u64(k: usize) -> u64 {
 #[pure]
 #[trusted]
 #[requires(idx < 64)]
-#[ensures(forall(|i: usize| i < 64 ==> is_allocated_u64(u, i)) ==> *u == U64_MAX)]  // If all bits are set, u should be U64_MAX.
-#[ensures(!result ==> *u < U64_MAX)]  // If any bit is not set, u should be less than U64_MAX.
+#[ensures(forall(|i: usize| i < 64 ==> is_allocated_u64(u, i)) ==> *u == u64::MAX)]  // If all bits are set, u should be u64::MAX.
+#[ensures(!result ==> *u < u64::MAX)]  // If any bit is not set, u should be less than u64::MAX.
 fn is_allocated_u64(u: &u64, idx: usize) -> bool {
     *u & (1 << idx) > 0
 }
@@ -131,28 +131,28 @@ fn clear_bit_atomic_u64(u: &AtomicU64, idx: usize) {
 #[pure]
 #[trusted]
 #[requires(k <= 64)]
-#[ensures(k == 0 ==> result == U64_MAX)]  // If k == 0, all bits should be set.
+#[ensures(k == 0 ==> result == u64::MAX)]  // If k == 0, all bits should be set.
 #[ensures(k == 64 ==> result == 0)]       // If k == 64, all bits should be cleared.
 #[ensures(forall(|j: usize| j < k ==> !is_allocated_u64(&result, j)))]  // All bits before the kth bit should be cleared.
 #[ensures(forall(|j: usize| j >= k && j < 64 ==> is_allocated_u64(&result, j)))]  // All bits including and after the kth bit should be set.
 fn make_trailing_zeros_u64(k: usize) -> u64 {
     if k == 64 {0}
-    else {U64_MAX << k}
+    else {u64::MAX << k}
 }
 
-#[pure]
-#[trusted]
-#[requires(k <= 64)]
-#[ensures(k == 0 ==> result == 0)]  // If k == 0, all bits should be cleared.
-#[ensures(k == 64 ==> result == U64_MAX)]  // If k == 64, all bits should be set.
-#[ensures(forall(|j: usize| j < k ==> is_allocated_u64(&result, j)))]  // All bits before the kth bit should be set.
-#[ensures(forall(|j: usize| j >= k && j < 64 ==> !is_allocated_u64(&result, j)))]  // All bits including and after the kth bit should be cleared.
-fn make_trailing_ones_u64(k: usize) -> u64 {
-    !make_trailing_zeros_u64(k)
-}
+// #[pure]
+// #[trusted]
+// #[requires(k <= 64)]
+// #[ensures(k == 0 ==> result == 0)]  // If k == 0, all bits should be cleared.
+// #[ensures(k == 64 ==> result == u64::MAX)]  // If k == 64, all bits should be set.
+// #[ensures(forall(|j: usize| j < k ==> is_allocated_u64(&result, j)))]  // All bits before the kth bit should be set.
+// #[ensures(forall(|j: usize| j >= k && j < 64 ==> !is_allocated_u64(&result, j)))]  // All bits including and after the kth bit should be cleared.
+// fn make_trailing_ones_u64(k: usize) -> u64 {
+//     !make_trailing_zeros_u64(k)
+// }
 
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
-#[ensures(*u < U64_MAX ==> result < 64)]  // If u is not U64_MAX, the result should be less than 64.
+#[ensures(*u < u64::MAX ==> result < 64)]  // If u is not u64::MAX, the result should be less than 64.
 #[ensures(forall(|k: usize| k < result ==> is_allocated_u64(u, k)))]  // All bits before the result should be set.
 #[ensures(result < 64 ==> !is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
 fn my_trailing_ones(u: &u64) -> usize {
@@ -162,7 +162,7 @@ fn my_trailing_ones(u: &u64) -> usize {
         body_invariant!(forall(|j: usize| j < k ==> is_allocated_u64(u, j)));
         if !is_allocated_u64(u, k) {
             prusti_assert!(k < 64);
-            prusti_assert!(*u < U64_MAX);
+            prusti_assert!(*u < u64::MAX);
             break;
         }
         prusti_assert!(is_allocated_u64(u, k));
@@ -170,7 +170,7 @@ fn my_trailing_ones(u: &u64) -> usize {
         prusti_assert!(k == 63 ==> forall(|j: usize| j < 64 ==> is_allocated_u64(u, j)));
         k += 1
     };
-    prusti_assert!(k == 64 ==> *u == U64_MAX);
+    prusti_assert!(k == 64 ==> *u == u64::MAX);
     prusti_assert!(k < 64 ==> !is_allocated_u64(u, k));
     k
 }
@@ -194,7 +194,7 @@ fn my_trailing_zeros(u: &u64) -> usize {
 #[requires(relevant_bits <= bitfield.len() * 64)]  // Relevant bits within array bounds.
 #[ensures(bitfield.len() == old(bitfield.len()))]  // No change to the length of the u64 array.
 #[ensures(forall(|i: usize| ((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0)))]  // All relevant bits in u64's before the one containing the final relevant bit must be set to 0.
-#[ensures(forall(|i: usize| (i < bitfield.len() && i * 64 >= relevant_bits ==> bitfield[i].0 == U64_MAX)))] // All bits after the u64 containing the final relevant bit must be set to allocated.
+#[ensures(forall(|i: usize| (i < bitfield.len() && i * 64 >= relevant_bits ==> bitfield[i].0 == u64::MAX)))] // All bits after the u64 containing the final relevant bit must be set to allocated.
 #[ensures(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==>  // The u64 containing the final relevant bit is set correctly.
     forall(|k: usize| (k < relevant_bits - j * 64 ==> !is_allocated_u64(&bitfield[j].0, k)))
 )))]
@@ -204,14 +204,14 @@ fn my_trailing_zeros(u: &u64) -> usize {
 fn initialize(bitfield: &[AtomicU64], relevant_bits: usize) {
     let mut i: usize = 0;
     let zero_u64 = 0u64;  // Prusti requires these to be variables, not constants.
-    let max_u64 = U64_MAX;
+    let max_u64 = u64::MAX;
     while i < bitfield.len() {
 
         body_invariant!(i < bitfield.len());
         body_invariant!(bitfield.len() == old(bitfield.len()));
         body_invariant!(i * 64 < relevant_bits ==> forall(|j: usize| j < i ==> bitfield[j].0 == 0));
         body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == 0)));
-        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| (j * 64 >= relevant_bits && j < i ==> bitfield[j].0 == U64_MAX)));
+        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| (j * 64 >= relevant_bits && j < i ==> bitfield[j].0 == u64::MAX)));
         body_invariant!(i * 64 >= relevant_bits ==> 
             forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
                 forall(|k: usize| k < (relevant_bits - j * 64) ==> !is_allocated_u64(&bitfield[j].0, k))    
@@ -235,10 +235,10 @@ fn initialize(bitfield: &[AtomicU64], relevant_bits: usize) {
         } else {
             bitfield[i].store(max_u64, Ordering::Relaxed);
             prusti_assert!(i * 64 >= relevant_bits);
-            prusti_assert!(bitfield[i].0 == U64_MAX);
+            prusti_assert!(bitfield[i].0 == u64::MAX);
         }
 
-        prusti_assert!(i * 64 >= relevant_bits ==> bitfield[i].0 == U64_MAX);
+        prusti_assert!(i * 64 >= relevant_bits ==> bitfield[i].0 == u64::MAX);
         prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0);
         prusti_assert!(i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits ==>
             forall(|j: usize| j < relevant_bits - bit_idx ==> !is_allocated_u64(&bitfield[i].0, j)));
@@ -250,7 +250,7 @@ fn initialize(bitfield: &[AtomicU64], relevant_bits: usize) {
     prusti_assert!(i > 0);
     prusti_assert!(i == bitfield.len());
     prusti_assert!(forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == 0)));
-    prusti_assert!(forall(|j: usize| (j * 64 >= relevant_bits && j < bitfield.len() ==> bitfield[j].0 == U64_MAX)));
+    prusti_assert!(forall(|j: usize| (j * 64 >= relevant_bits && j < bitfield.len() ==> bitfield[j].0 == u64::MAX)));
     prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
         forall(|k: usize| (k < relevant_bits - j * 64 ==> !is_allocated_u64(&bitfield[j].0, k)))
     )));
@@ -272,11 +272,11 @@ fn is_allocated(bitfield: &[AtomicU64], idx: usize) -> Option<bool> {
 #[requires(relevant_bits <= bitfield.len() * 64)]
 #[requires(relevant_bits > 0)]
 #[ensures(!result ==> exists(|i: usize| (  // If the bitfield is not full, there must be at least one bit within the relevant_bits range that is not set.
-    ((i + 1) * 64 <= relevant_bits && bitfield[i].0 != U64_MAX) ||
+    ((i + 1) * 64 <= relevant_bits && bitfield[i].0 != u64::MAX) ||
     (i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits &&
         exists(|j: usize| j < relevant_bits - i * 64 ==> !is_allocated_u64(&bitfield[i].0, j)))
 )))]
-#[ensures(result ==> forall(|i: usize| ((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == U64_MAX)))]  // If the bitfield is full, all u64's before the one containing the last relevant bit must be set to U64_MAX.
+#[ensures(result ==> forall(|i: usize| ((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == u64::MAX)))]  // If the bitfield is full, all u64's before the one containing the last relevant bit must be set to u64::MAX.
 #[ensures(result ==> forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==>  // If the bitfield is full, the u64 containing the last relevant bit must be set correctly (all bits before the last relevant bit are set to 1).
     forall(|k: usize| (k < relevant_bits - j * 64 ==> is_allocated_u64(&bitfield[j].0, k)))
 )))]
@@ -285,8 +285,8 @@ fn is_full(bitfield: &[AtomicU64], relevant_bits: usize) -> bool {
     while i < bitfield.len() {
 
         body_invariant!(i < bitfield.len());
-        body_invariant!(i * 64 < relevant_bits ==> forall(|j: usize| j < i ==> bitfield[j].0 == U64_MAX));
-        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == U64_MAX)));
+        body_invariant!(i * 64 < relevant_bits ==> forall(|j: usize| j < i ==> bitfield[j].0 == u64::MAX));
+        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == u64::MAX)));
         body_invariant!(i * 64 >= relevant_bits ==> 
             forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
                 forall(|k: usize| k < (relevant_bits - j * 64) ==> is_allocated_u64(&bitfield[j].0, k))    
@@ -296,14 +296,14 @@ fn is_full(bitfield: &[AtomicU64], relevant_bits: usize) -> bool {
         let bit_idx = i * 64;
         if bit_idx <= relevant_bits {
             let remaining_bits = relevant_bits - bit_idx;
-            if remaining_bits >= 64 {if bitfield[i].load(Ordering::Relaxed) != U64_MAX {return false;}}
+            if remaining_bits >= 64 {if bitfield[i].load(Ordering::Relaxed) != u64::MAX {return false;}}
             else if my_trailing_ones(&bitfield[i].load(Ordering::Relaxed)) < remaining_bits {return false;}
             else {
                 prusti_assert!(forall(|j: usize| j < remaining_bits ==> is_allocated_u64(&bitfield[i].0, j)));
             }
         } else {}
 
-        prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == U64_MAX);
+        prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == u64::MAX);
         prusti_assert!(i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits ==>
             forall(|j: usize| j < relevant_bits - bit_idx ==> is_allocated_u64(&bitfield[i].0, j)));
         
@@ -311,7 +311,7 @@ fn is_full(bitfield: &[AtomicU64], relevant_bits: usize) -> bool {
     }
     prusti_assert!(i > 0);
     prusti_assert!(i == bitfield.len());
-    prusti_assert!(forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == U64_MAX)));
+    prusti_assert!(forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == u64::MAX)));
     prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
         forall(|k: usize| (k < relevant_bits - j * 64 ==> is_allocated_u64(&bitfield[j].0, k)))
     )));
@@ -432,7 +432,7 @@ fn set_bit(bitfield: &[AtomicU64], idx: usize) -> bool {
     true
 }
 
-#[requires(u < U64_MAX)]
+#[requires(u < u64::MAX)]
 #[ensures(result < 64)]  // Correct range for result
 #[ensures(!is_allocated_u64(&u, result))] // Check that the result index is available
 #[ensures(forall(|j: usize| j < result ==> is_allocated_u64(&u, j)))]  // Check that the result index is the first one available (all previous indices allocated)
@@ -446,7 +446,7 @@ fn first_fit_idx(u: u64) -> usize {
 
 #[requires(layout_size > 0)]
 #[requires(layout_align > 0)]
-#[requires(u < U64_MAX)]
+#[requires(u < u64::MAX)]
 #[ensures(result.is_some() ==> {  // The returned index should within the bounds of the current u64.
     let (idx, addr) = peek_option(&result);
     idx >= base_idx * 64 && idx < base_idx * 64 + 64
@@ -485,7 +485,7 @@ fn first_fit_in_u64 (
     } else {None}
 }
 
-#[requires(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 <= U64_MAX))]
+#[requires(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 <= u64::MAX))]
 #[requires(layout_size > 0)]
 #[requires(layout_align > 0)]
 #[ensures(result.is_some() ==> {  // Check that the returned index is within range and that the address is correct.
@@ -499,9 +499,9 @@ fn first_fit_in_u64 (
 #[ensures(result.is_some() ==> {  // Ensure that all u64 before the returned index is full. The result being the first free bit of its u64 is already guaranteed by `first_fit_in_u64`.
     let (idx, addr) = peek_option(&result);
     let base_idx = idx / 64;
-    forall(|i: usize| i < base_idx ==> bitfield[i].0 == U64_MAX)
+    forall(|i: usize| i < base_idx ==> bitfield[i].0 == u64::MAX)
 })]
-#[ensures(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 == U64_MAX) ==> !result.is_some())]  // No result if the bitfield is full.
+#[ensures(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 == u64::MAX) ==> !result.is_some())]  // No result if the bitfield is full.
 #[ensures(result.is_some() ==> {  // Check that the result index is available
     let (idx, addr) = peek_option(&result);
     !is_allocated_u64(&bitfield[idx / 64].0, idx % 64)
@@ -522,20 +522,20 @@ fn first_fit(
     while base_idx < bitfield.len() {
 
         body_invariant!(base_idx < bitfield.len());
-        body_invariant!(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 <= U64_MAX));
-        body_invariant!(forall(|i: usize| i < base_idx ==> bitfield[i].0 == U64_MAX));  // All previous u64 must have max value
+        body_invariant!(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 <= u64::MAX));
+        body_invariant!(forall(|i: usize| i < base_idx ==> bitfield[i].0 == u64::MAX));  // All previous u64 must have max value
 
         let current_val = bitfield[base_idx].load(Ordering::Relaxed);
-        if current_val < U64_MAX {
+        if current_val < u64::MAX {
             return first_fit_in_u64(current_val, base_idx, base_addr, layout_size, layout_align, page_size, metadata_size)
         }
 
-        prusti_assert!(current_val == U64_MAX);
+        prusti_assert!(current_val == u64::MAX);
 
         base_idx += 1;
     }
 
-    prusti_assert!(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 == U64_MAX));
+    prusti_assert!(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 == u64::MAX));
 
     None
 }
