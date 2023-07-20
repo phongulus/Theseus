@@ -2789,6 +2789,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "prusti-contracts"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa3e18b623279c8b54ecbed69d4404210b5a0b0d28a4c6d630206f747cf3c2cd"
+dependencies = [
+ "prusti-contracts-proc-macros",
+]
+
+[[package]]
+name = "prusti-contracts-proc-macros"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84373ea329472b1db3a7577a8f2814f52c56960c4115641f65327e6b6c8eae9e"
+
+[[package]]
 name = "ps"
 version = "0.1.0"
 dependencies = [
@@ -3428,6 +3443,7 @@ version = "0.7.0"
 dependencies = [
  "log",
  "memory",
+ "trusted_bitfield",
 ]
 
 [[package]]
@@ -4156,6 +4172,13 @@ name = "tock-registers"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ee8fba06c1f4d0b396ef61a54530bb6b28f0dc61c38bc8bc5a5a48161e6282e"
+
+[[package]]
+name = "trusted_bitfield"
+version = "0.1.0"
+dependencies = [
+ "prusti-contracts",
+]
 
 [[package]]
 name = "tsc"

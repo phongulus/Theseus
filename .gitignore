@@ -39,3 +39,9 @@ github_pages/doc/
 
 # library lock files
 /libs/**/Cargo.lock
+
+# macOS files
+.DS_Store
+
+# Verus trace log
+verus-prover-trace.log

@@ -16,3 +16,5 @@ version = "0.4.8"
 [dependencies.memory]
 path = "../../kernel/memory"
 
+[dependencies.trusted_bitfield]
+path = "../../libs/trusted_bitfield"

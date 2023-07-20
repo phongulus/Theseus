@@ -1,5 +1,6 @@
 use crate::*;
 use core::sync::atomic::{AtomicU64, Ordering};
+use trusted_bitfield::*;
 
 /// A trait defining bitfield operations we need for tracking allocated objects within a page.
 pub(crate) trait Bitfield {

@@ -25,6 +25,7 @@
 
 #[macro_use] extern crate log;
 extern crate memory;
+extern crate trusted_bitfield;
 
 mod pages;
 mod sc;
@@ -38,6 +39,7 @@ use core::fmt;
 use core::mem;
 use core::ptr::{self, NonNull};
 use memory::{MappedPages, VirtualAddress};
+use trusted_bitfield::*;
 
 
 #[cfg(target_arch = "x86_64")]
