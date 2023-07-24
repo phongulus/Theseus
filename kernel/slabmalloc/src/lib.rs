@@ -39,7 +39,6 @@ use core::fmt;
 use core::mem;
 use core::ptr::{self, NonNull};
 use memory::{MappedPages, VirtualAddress};
-use trusted_bitfield::*;
 
 
 #[cfg(target_arch = "x86_64")]

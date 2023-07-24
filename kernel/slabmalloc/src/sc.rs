@@ -207,11 +207,11 @@ impl<'a, P: AllocablePage> SCAllocator<'a, P> {
 
     /// Creates an allocable page given a MappedPages8k object and returns a reference to the allocable page.
     /// The MappedPages8k object is stored within the metadata of the allocable page.
-    fn create_allocable_page(mp: MappedPages8k, heap_id: usize) -> &'a mut P{
+    fn create_allocable_page(&self, mp: MappedPages8k, heap_id: usize) -> &'a mut P{
         let vaddr = mp.start_address().value();
 
         // create page and store the MappedPages object
-        let page = P::new(mp, heap_id);
+        let page = P::new(mp, heap_id, self.size, MappedPages8k::SIZE);
         let page_ref: &'a mut P = unsafe { core::mem::transmute(vaddr) } ; // not unsafe because the allocable page was only create by a mapped page that fits the criteria
         unsafe { (page_ref as *mut P).write(page); }
 
@@ -220,8 +220,7 @@ impl<'a, P: AllocablePage> SCAllocator<'a, P> {
 
     /// Refill the SCAllocator
     pub fn refill(&mut self, mp: MappedPages8k, heap_id: usize) {
-        let page = Self::create_allocable_page(mp, heap_id);
-        page.bitfield_mut().initialize(self.size, P::SIZE - P::METADATA_SIZE);
+        let page = self.create_allocable_page(mp, heap_id);
         *page.prev() = Rawlink::none();
         *page.next() = Rawlink::none();
         // trace!("adding page to SCAllocator {:p}", page);
@@ -255,7 +254,7 @@ impl<'a, P: AllocablePage> SCAllocator<'a, P> {
         //     layout, 
         //     P::SIZE - CACHE_LINE_SIZE
         // );
-        assert!(layout.size() <= self.size);
+        assert!(layout.size() <= self.size);  // This ought to be enough no? No need to create a new layout and run the checks over again in bitfield
         assert!(self.size <= (P::SIZE - CACHE_LINE_SIZE));
         let new_layout = unsafe { Layout::from_size_align_unchecked(self.size, layout.align()) };
         assert!(new_layout.size() >= layout.size());

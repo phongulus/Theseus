@@ -2,153 +2,6 @@ use crate::*;
 use core::sync::atomic::{AtomicU64, Ordering};
 use trusted_bitfield::*;
 
-/// A trait defining bitfield operations we need for tracking allocated objects within a page.
-pub(crate) trait Bitfield {
-    fn initialize(&mut self, for_size: usize, capacity: usize);
-    fn first_fit(
-        &self,
-        base_addr: usize,
-        layout: Layout,
-        page_size: usize,
-        metadata_size: usize,
-    ) -> Option<(usize, usize)>;
-    fn is_allocated(&self, idx: usize) -> bool;
-    fn set_bit(&self, idx: usize);
-    fn clear_bit(&self, idx: usize);
-    fn is_full(&self) -> bool;
-    fn all_free(&self, relevant_bits: usize) -> bool;
-}
-
-/// Implementation of bit operations on u64 slices.
-///
-/// We allow deallocations (i.e. clearing a bit in the field)
-/// from any thread. That's why the bitfield is a bunch of AtomicU64.
-impl Bitfield for [AtomicU64] {
-    /// Initialize the bitfield
-    ///
-    /// # Arguments
-    ///  * `for_size`: Object size we want to allocate
-    ///  * `capacity`: Maximum size of the buffer the bitmap maintains.
-    ///
-    /// Ensures that we only have free slots for what we can allocate
-    /// within the page (by marking everything else allocated).
-    fn initialize(&mut self, for_size: usize, capacity: usize) {
-        // Set everything to allocated
-        for bitmap in self.iter_mut() {
-            *bitmap = AtomicU64::new(u64::max_value());
-        }
-
-        // Mark actual slots as free
-        let relevant_bits = core::cmp::min(capacity / for_size, self.len() * 64);
-        for idx in 0..relevant_bits {
-            self.clear_bit(idx);
-        }
-    }
-
-    /// Tries to find a free block of memory that satisfies `alignment` requirement.
-    ///
-    /// # Notes
-    /// * We pass size here to be able to calculate the resulting address within `data`.
-    fn first_fit(
-        &self,
-        base_addr: usize,
-        layout: Layout,
-        page_size: usize,
-        metadata_size: usize
-    ) -> Option<(usize, usize)> {
-        for (base_idx, b) in self.iter().enumerate() {
-            let bitval = b.load(Ordering::Relaxed);
-            if bitval == u64::max_value() {
-                continue;
-            } else {
-                let negated = !bitval;
-                let first_free = negated.trailing_zeros() as usize;
-                let idx: usize = base_idx * 64 + first_free;
-                let offset = idx * layout.size();
-
-                // TODO(bad): psize needs to be passed as arg
-                let offset_inside_data_area = offset <= (page_size - metadata_size - layout.size());
-                if !offset_inside_data_area {
-                    return None;
-                }
-
-                let addr: usize = base_addr + offset;
-                let alignment_ok = addr % layout.align() == 0;
-                let block_is_free = bitval & (1 << first_free) == 0;
-                if alignment_ok && block_is_free {
-                    return Some((idx, addr));
-                }
-            }
-        }
-        None
-    }
-
-    /// Check if the bit `idx` is set.
-    #[inline(always)]
-    fn is_allocated(&self, idx: usize) -> bool {
-        let base_idx = idx / 64;
-        let bit_idx = idx % 64;
-        (self[base_idx].load(Ordering::Relaxed) & (1 << bit_idx)) > 0
-    }
-
-    /// Sets the bit number `idx` in the bit-field.
-    #[inline(always)]
-    fn set_bit(&self, idx: usize) {
-        let base_idx = idx / 64;
-        let bit_idx = idx % 64;
-        self[base_idx].fetch_or(1 << bit_idx, Ordering::Relaxed);
-    }
-
-    /// Clears bit number `idx` in the bit-field.
-    #[inline(always)]
-    fn clear_bit(&self, idx: usize) {
-        let base_idx = idx / 64;
-        let bit_idx = idx % 64;
-        self[base_idx].fetch_and(!(1 << bit_idx), Ordering::Relaxed);
-    }
-
-    /// Checks if we could allocate more objects of a given `alloc_size` within the
-    /// `capacity` of the memory allocator.
-    ///
-    /// # Note
-    /// The ObjectPage will make sure to mark the top-most bits as allocated
-    /// for large sizes (i.e., a size 512 SCAllocator will only really need 3 bits)
-    /// to track allocated objects). That's why this function can be simpler
-    /// than it would need to be in practice.
-    #[inline(always)]
-    fn is_full(&self) -> bool {
-        self.iter()
-            .filter(|&x| x.load(Ordering::Relaxed) != u64::max_value())
-            .count()
-            == 0
-    }
-
-    /// Checks if the page has currently no allocations.
-    ///
-    /// This is called `all_free` rather than `is_emtpy` because
-    /// we already have an is_empty fn as part of the slice.
-    fn all_free(&self, relevant_bits: usize) -> bool {
-        for (idx, bitmap) in self.iter().enumerate() {
-            let checking_bit_range = (idx * 64, (idx + 1) * 64);
-            if relevant_bits >= checking_bit_range.0 && relevant_bits < checking_bit_range.1 {
-                // Last relevant bitmap, here we only have to check that a subset of bitmap is marked free
-                // the rest will be marked full
-                let bits_that_should_be_free = relevant_bits - checking_bit_range.0;
-                let free_mask = (1 << bits_that_should_be_free) - 1;
-                return (free_mask & bitmap.load(Ordering::Relaxed)) == 0;
-            }
-
-            if bitmap.load(Ordering::Relaxed) == 0 {
-                continue;
-            } else {
-                return false;
-            }
-        }
-
-        true
-    }
-}
-
 /// This trait is used to define a page from which objects are allocated
 /// in an `SCAllocator`.
 ///
@@ -168,15 +21,15 @@ pub trait AllocablePage {
 
     const HEAP_ID_OFFSET: usize;
 
-    fn new(mp: MappedPages8k, heap_id: usize) -> Self 
+    fn new(mp: MappedPages8k, heap_id: usize, for_size: usize, capacity: usize) -> Self 
     where
         Self: core::marker::Sized;
     fn retrieve_mapped_pages(&mut self) -> Option<MappedPages8k>;
     fn clear_metadata(&mut self);
     fn set_heap_id(&mut self, heap_id: usize);
     fn heap_id(&self) -> usize;
-    fn bitfield(&self) -> &[AtomicU64; 8];
-    fn bitfield_mut(&mut self) -> &mut [AtomicU64; 8];
+    fn bitfield(&self) -> &TrustedBitfield8;
+    fn bitfield_mut(&mut self) -> &mut TrustedBitfield8;
     fn prev(&mut self) -> &mut Rawlink<Self>
     where
         Self: core::marker::Sized;
@@ -185,20 +38,19 @@ pub trait AllocablePage {
         Self: core::marker::Sized;
     fn buffer_size() -> usize;
 
-    /// Tries to find a free block within `data` that satisfies `alignment` requirement.
-    fn first_fit(&self, layout: Layout) -> Option<(usize, usize)> {
-        let base_addr = (self as *const Self as *const u8) as usize;
-        self.bitfield().first_fit(base_addr, layout, Self::SIZE, Self::METADATA_SIZE)
-    }
+    /// Deallocates a memory object within this page.
+    /// Relies on a callback function generated by TrustedBitfield, so this function
+    /// must be defined when implementing the trait.
+    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) -> Result<(), &'static str>;
 
     /// Tries to allocate an object within this page.
     ///
     /// In case the slab is full, returns a null ptr.
     fn allocate(&mut self, layout: Layout) -> *mut u8 {
-        match self.first_fit(layout) {
-            Some((idx, addr)) => {
-                self.bitfield().set_bit(idx);
-                addr as *mut u8
+        let base_addr = (self as *const Self as *const u8) as usize;
+        match self.bitfield().first_fit_and_set(layout.align(), base_addr, Self::SIZE, Self::METADATA_SIZE) {
+            Some(v) => {
+                addr_from_verified_alloc_addr(v) as *mut u8
             }
             None => ptr::null_mut(),
         }
@@ -210,28 +62,8 @@ pub trait AllocablePage {
     }
 
     /// Checks if the page has currently no allocations.
-    fn is_empty(&self, relevant_bits: usize) -> bool {
-        self.bitfield().all_free(relevant_bits)
-    }
-
-    /// Deallocates a memory object within this page.
-    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) -> Result<(), &'static str> {
-        // trace!(
-        //     "AllocablePage deallocating ptr = {:p} with {:?}",
-        //     ptr,
-        //     layout
-        // );
-        let page_offset = (ptr.as_ptr() as usize) & (Self::SIZE - 1);
-        assert!(page_offset % layout.size() == 0);
-        let idx = page_offset / layout.size();
-        assert!(
-            self.bitfield().is_allocated(idx),
-            "{:p} not marked allocated?",
-            ptr
-        );
-
-        self.bitfield().clear_bit(idx);
-        Ok(())
+    fn is_empty(&self, _: usize) -> bool {
+        self.bitfield().all_free()
     }
 }
 
@@ -263,7 +95,10 @@ pub struct ObjectPage8k<'a> {
     prev: Rawlink<ObjectPage8k<'a>>,
 
     /// A bit-field to track free/allocated memory within `data`.
-    pub(crate) bitfield: [AtomicU64; 8],
+    pub(crate) bitfield: TrustedBitfield8,
+
+    /// A callback function to generate a verified dealloc address
+    generate_verified_dealloc_addr: Option<fn(usize) -> VerifiedDeallocAddr>,
 }
 
 
@@ -273,19 +108,27 @@ unsafe impl<'a> Sync for ObjectPage8k<'a> {}
 
 impl<'a> AllocablePage for ObjectPage8k<'a> {
     const SIZE: usize = 8192;
-    const METADATA_SIZE: usize = core::mem::size_of::<Option<MappedPages8k>>() + core::mem::size_of::<usize>() + (2*core::mem::size_of::<Rawlink<ObjectPage8k<'a>>>()) + (8*8);
-    const HEAP_ID_OFFSET: usize = Self::SIZE - (core::mem::size_of::<usize>() + (2*core::mem::size_of::<Rawlink<ObjectPage8k<'a>>>()) + (8*8));
+    const METADATA_SIZE: usize =
+        core::mem::size_of::<Option<MappedPages8k>>() + core::mem::size_of::<usize>() + (2*core::mem::size_of::<Rawlink<ObjectPage8k<'a>>>()) +
+        core::mem::size_of::<TrustedBitfield8>() + core::mem::size_of::<Option<fn(usize) -> VerifiedDeallocAddr>>();
+    const HEAP_ID_OFFSET: usize =
+        Self::SIZE - (core::mem::size_of::<usize>() + (2*core::mem::size_of::<Rawlink<ObjectPage8k<'a>>>()) +
+        core::mem::size_of::<TrustedBitfield8>() + core::mem::size_of::<Option<fn(usize) -> VerifiedDeallocAddr>>());
 
     /// Creates a new 8KiB allocable page and stores the MappedPages object in the metadata portion.
-    fn new(mp: MappedPages8k, heap_id: usize) -> ObjectPage8k<'a> {
-        ObjectPage8k {
-            data: [0; ObjectPage8k::SIZE -ObjectPage8k::METADATA_SIZE],
-            mp: Some(mp),
-            heap_id,
-            next: Rawlink::default(),
-            prev: Rawlink::default(),
-            bitfield: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),AtomicU64::new(0) ],
-        }
+    fn new(mp: MappedPages8k, heap_id: usize, for_size: usize, capacity: usize) -> ObjectPage8k<'a> {
+        if let Some(mut bf) = TrustedBitfield8::new(for_size, capacity) {
+            let generate_verified_dealloc_addr = bf.dealloc_callback();
+            ObjectPage8k {
+                data: [0; ObjectPage8k::SIZE -ObjectPage8k::METADATA_SIZE],
+                mp: Some(mp),
+                heap_id,
+                next: Rawlink::default(),
+                prev: Rawlink::default(),
+                bitfield: bf,
+                generate_verified_dealloc_addr,
+            }
+        } else {panic!("Failed to create bitfield for ObjectPage8k");}
     }
 
     /// Returns the MappedPages object that was stored in the metadata portion of the page.
@@ -295,14 +138,23 @@ impl<'a> AllocablePage for ObjectPage8k<'a> {
         mp
     }
 
+    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) -> Result<(), &'static str> {
+        if let Some(f) = self.generate_verified_dealloc_addr {
+            let v = f(ptr.as_ptr() as usize);
+            let base_addr = (self as *const Self as *const u8) as usize;
+            assert!(self.bitfield().clear_verified_addr(v, base_addr), "{:p} out of range", ptr);
+            Ok(())
+        } else {panic!("Dealloc address function not initialized");}
+    }
+
     /// clears the metadata section of the page
     fn clear_metadata(&mut self) {
         self.heap_id = 0;
         self.next = Rawlink::default();
         self.prev = Rawlink::default();
-        for bf in &self.bitfield {
-            bf.store(0, Ordering::SeqCst);
-        }
+        // for bf in &self.bitfield {
+        //     bf.store(0, Ordering::SeqCst);
+        // }
     }
 
     fn set_heap_id(&mut self, heap_id: usize){
@@ -313,10 +165,10 @@ impl<'a> AllocablePage for ObjectPage8k<'a> {
         self.heap_id
     }
 
-    fn bitfield(&self) -> &[AtomicU64; 8] {
+    fn bitfield(&self) -> &TrustedBitfield8 {
         &self.bitfield
     }
-    fn bitfield_mut(&mut self) -> &mut [AtomicU64; 8] {
+    fn bitfield_mut(&mut self) -> &mut TrustedBitfield8 {
         &mut self.bitfield
     }
 
