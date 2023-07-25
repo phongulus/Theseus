@@ -312,10 +312,9 @@ impl<'a, P: AllocablePage> SCAllocator<'a, P> {
         // Figure out which page we are on and construct a reference to it
         // TODO: The linked list will have another &mut reference
         let slab_page = mem::transmute::<VAddr, &'a mut P>(page);
-        let new_layout = Layout::from_size_align_unchecked(self.size, layout.align());
 
         let slab_page_was_full = slab_page.is_full();
-        let ret = slab_page.deallocate(ptr, new_layout);
+        let ret = slab_page.deallocate(ptr);
         debug_assert!(ret.is_ok(), "Slab page deallocate won't fail at the moment");
 
         if slab_page.is_empty(self.obj_per_page) {
