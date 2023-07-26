@@ -141,7 +141,8 @@ fn clear_bit_atomic_u64(u: &AtomicU64, idx: usize) {
 #[ensures(forall(|j: usize| j >= k && j < 64 ==> is_allocated_u64(&result, j)))]  // All bits including and after the kth bit should be set.
 fn make_trailing_zeros_u64(k: usize) -> u64 {
     if k == 64 {0}
-    else {u64::MAX << k}
+    else {u64::MAX - (1 << k) + 1}
+    // else {u64::MAX << k}
 }
 
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
@@ -182,6 +183,19 @@ fn my_trailing_zeros(u: &u64) -> usize {
     }; k
 }
 
+// fn initialize(bitfield: &mut [AtomicU64], relevant_bits: usize) {
+//     // Set everything to allocated
+//     for bitmap in bitfield.iter_mut() {
+//         *bitmap = AtomicU64::new(u64::max_value());
+//     }
+
+//     // Mark actual slots as free
+//     // let relevant_bits = core::cmp::min(capacity / for_size, self.len() * 64);
+//     for idx in 0..relevant_bits {
+//         clear_bit(bitfield, idx);
+//     }
+// }
+
 #[requires(bitfield.len() > 0)]
 #[requires(relevant_bits > 0)]
 #[requires(relevant_bits <= bitfield.len() * 64)]  // Relevant bits within array bounds.
@@ -194,7 +208,7 @@ fn my_trailing_zeros(u: &u64) -> usize {
 #[ensures(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
     forall(|k: usize| (k >= relevant_bits - j * 64 && k < 64 ==> is_allocated_u64(&bitfield[j].0, k)))
 )))]
-fn initialize(bitfield: &[AtomicU64], relevant_bits: usize) {
+fn initialize(bitfield: &mut [AtomicU64], relevant_bits: usize) {
     let mut i: usize = 0;
     let zero_u64 = 0u64;  // Prusti requires these to be variables, not constants.
     let max_u64 = u64::MAX;
@@ -219,14 +233,26 @@ fn initialize(bitfield: &[AtomicU64], relevant_bits: usize) {
         let bit_idx = i * 64;
         if bit_idx <= relevant_bits {
             let remaining_bits = relevant_bits - bit_idx;
-            if remaining_bits >= 64 {bitfield[i].store(zero_u64, Ordering::Relaxed);}
+            if remaining_bits >= 64 {
+                bitfield[i] = AtomicU64::new(zero_u64);
+                // bitfield[i].store(zero_u64, Ordering::Relaxed);
+            }
             else {
-                bitfield[i].store(make_trailing_zeros_u64(remaining_bits), Ordering::Relaxed);
-                prusti_assert!(forall(|j: usize| j < remaining_bits ==> !is_allocated_u64(&bitfield[i].0, j)));
-                prusti_assert!(forall(|j: usize| (j >= remaining_bits && j < 64) ==> is_allocated_u64(&bitfield[i].0, j)));
+                let mut tz = max_u64;
+                let mut a = 0;
+                while a < remaining_bits {
+                    tz = tz & !(1 << a);
+                    a += 1;
+                } 
+                bitfield[i] = AtomicU64::new(tz);
+                // bitfield[i] = AtomicU64::new(make_trailing_zeros_u64(remaining_bits));
+                // bitfield[i].store(make_trailing_zeros_u64(remaining_bits), Ordering::Relaxed);
+                // prusti_assert!(forall(|j: usize| j < remaining_bits ==> !is_allocated_u64(&bitfield[i].0, j)));
+                // prusti_assert!(forall(|j: usize| (j >= remaining_bits && j < 64) ==> is_allocated_u64(&bitfield[i].0, j)));
             }
         } else {
-            bitfield[i].store(max_u64, Ordering::Relaxed);
+            bitfield[i] = AtomicU64::new(max_u64);
+            // bitfield[i].store(max_u64, Ordering::Relaxed);
             prusti_assert!(i * 64 >= relevant_bits);
             prusti_assert!(bitfield[i].0 == u64::MAX);
         }
