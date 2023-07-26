@@ -12,6 +12,8 @@
 
 #![cfg_attr(not(prusti), no_std)]
 
+#[macro_use] extern crate log;
+
 use prusti_contracts::*;
 use core::sync::atomic::Ordering;
 
@@ -194,6 +196,8 @@ fn my_trailing_zeros(u: &u64) -> usize {
 //     for idx in 0..relevant_bits {
 //         clear_bit(bitfield, idx);
 //     }
+
+//     // info!("Boo");
 // }
 
 #[requires(bitfield.len() > 0)]
@@ -212,6 +216,7 @@ fn initialize(bitfield: &mut [AtomicU64], relevant_bits: usize) {
     let mut i: usize = 0;
     let zero_u64 = 0u64;  // Prusti requires these to be variables, not constants.
     let max_u64 = u64::MAX;
+    // info!("Starting initialize");
     while i < bitfield.len() {
 
         body_invariant!(i < bitfield.len());
@@ -234,10 +239,13 @@ fn initialize(bitfield: &mut [AtomicU64], relevant_bits: usize) {
         if bit_idx <= relevant_bits {
             let remaining_bits = relevant_bits - bit_idx;
             if remaining_bits >= 64 {
+                // info!("Should be zero here");
                 bitfield[i] = AtomicU64::new(zero_u64);
                 // bitfield[i].store(zero_u64, Ordering::Relaxed);
             }
             else {
+                // info!("Should be trailing zeroes here");
+                // info!("Should be trailing zeroes here, 2");
                 let mut tz = max_u64;
                 let mut a = 0;
                 while a < remaining_bits {
@@ -251,11 +259,14 @@ fn initialize(bitfield: &mut [AtomicU64], relevant_bits: usize) {
                 // prusti_assert!(forall(|j: usize| (j >= remaining_bits && j < 64) ==> is_allocated_u64(&bitfield[i].0, j)));
             }
         } else {
+            // info!("Should be max here");
             bitfield[i] = AtomicU64::new(max_u64);
             // bitfield[i].store(max_u64, Ordering::Relaxed);
             prusti_assert!(i * 64 >= relevant_bits);
             prusti_assert!(bitfield[i].0 == u64::MAX);
         }
+
+        // info!("done with one iteration");
 
         prusti_assert!(i * 64 >= relevant_bits ==> bitfield[i].0 == u64::MAX);
         prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0);
@@ -276,6 +287,8 @@ fn initialize(bitfield: &mut [AtomicU64], relevant_bits: usize) {
     prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
         forall(|k: usize| (k >= relevant_bits - j * 64 && k < 64 ==> is_allocated_u64(&bitfield[j].0, k)))
     )));
+
+    info!("Done initializing trusted bitfield");
 }
 
 #[pure]

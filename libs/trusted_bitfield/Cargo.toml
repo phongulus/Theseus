@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 prusti-contracts = "^0.1"
+
+[dependencies.log]
+version = "0.4.8"

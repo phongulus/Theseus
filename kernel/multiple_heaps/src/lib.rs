@@ -448,6 +448,7 @@ if #[cfg(unsafe_heap)] {
         /// * `layout`: layout.size will determine which allocation size the retrieved pages will be used for. 
         /// * `heap_to_grow`: heap that needs to grow.
         fn grow_heap(&self, layout: Layout, heap_to_grow: &LockedHeap) -> Result<(), &'static str> {
+            info!("Trying to grow heap: {}", heap_to_grow.lock().heap_id);
             // (1) Try to retrieve a page from the another heap
             for heap_ref in self.heaps.values() {
                 if let Some((mp, _giving_heap_id)) = heap_ref.try_lock().and_then(|mut giving_heap| 
@@ -459,7 +460,9 @@ if #[cfg(unsafe_heap)] {
             }
 
             // (2) Allocate page from the OS
+            info!("Trying to lock! Heap: {}", heap_to_grow.lock().heap_id);
             let mut heap_end = self.end.lock();
+            info!("Got it.");
             for _ in 0..HEAP_GROWTH_AMOUNT {
                 let (mp, _action) = create_heap_mapping(*heap_end, HEAP_MAPPED_PAGES_SIZE_IN_BYTES)?;
                 let mp = MappedPages8k::new(mp)?;
