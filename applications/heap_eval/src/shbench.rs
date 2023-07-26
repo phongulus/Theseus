@@ -57,7 +57,11 @@ pub fn do_shbench() -> Result<(), &'static str> {
         let start = hpet.get_counter();
 
         for _ in 0..nthreads {
-            threads.push(spawn::new_task_builder(worker, ()).name(String::from("worker thread")).spawn()?);
+            // The default shbench test
+            // threads.push(spawn::new_task_builder(worker, ()).name(String::from("worker thread")).spawn()?);
+
+            // The alloc only test
+            threads.push(spawn::new_task_builder(alloc_only_test, ()).name(String::from("worker thread")).spawn()?);
         }  
 
         for i in 0..nthreads {
@@ -75,6 +79,66 @@ pub fn do_shbench() -> Result<(), &'static str> {
     println!("{:?}", calculate_stats(&tries));
 
     Ok(())
+}
+
+
+fn alloc_only_test(_: ()) {
+    #[cfg(not(direct_access_to_multiple_heaps))]
+    let allocator = &ALLOCATOR;
+
+    // In the case of directly accessing the multiple heaps, we do have to access them through the Once wrapper
+    // at the beginning, but the time it takes to do this once at the beginning of thread is
+    // insignificant compared to the number of iterations we run. It also printed above.
+    #[cfg(direct_access_to_multiple_heaps)]
+    let allocator = match ALLOCATOR.get() {
+        Some(allocator) => allocator,
+        None => {
+            error!("Multiple heaps not initialized!");
+            return;
+        }
+    };
+
+    let nthreads = NTHREADS.load(Ordering::SeqCst);
+    let niterations = NITERATIONS.load(Ordering::SeqCst) / nthreads;
+    let min_block_size = MIN_BLOCK_SIZE.load(Ordering::SeqCst);
+    let max_block_size = MAX_BLOCK_SIZE.load(Ordering::SeqCst);
+
+    // let alloc_count = niterations;
+    // let mut allocations = Vec::with_capacity(alloc_count);
+    // let mut layouts = Vec::with_capacity(alloc_count);
+
+    // // initialize the vectors so we can treat them like arrays 
+    // for _ in 0..alloc_count {
+    //     allocations.push(ptr::null_mut());
+    //     layouts.push(Layout::new::<u8>());
+    // }
+
+    for _ in 0..niterations {
+        println!("allocating");
+        let mut size_base = min_block_size;
+        while size_base < max_block_size {
+            let mut size = size_base;
+            while size > 0 {
+                let mut iterations = 1;
+
+                // smaller sizes will be allocated a larger amount
+                if size < 10000 { iterations = 10; }
+                if size < 1000 { iterations *= 5; }
+                if size < 100 {iterations *= 5; }
+
+                for _ in 0..iterations {
+                    let layout = Layout::from_size_align(size, 2).unwrap();
+                    let ptr = unsafe{ allocator.alloc(layout) };
+                    if ptr.is_null() {
+                        error!("Out of Heap Memory");
+                        return;
+                    }
+                }
+                size /= 2;
+            }
+            size_base = size_base * 3 / 2 + 1
+        }
+    }
 }
 
 
