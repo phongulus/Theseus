@@ -73,7 +73,7 @@ exclude = [
 	## Exclude benchmark-related crates in all builds; they must be explicitly included via features.
 	## TODO: move these to a specific "benches" folder so we can exclude that entire folder.
 	"applications/bm",
-	"applications/heap_eval",
+	# "applications/heap_eval",
 	"applications/rq_eval",
 	"applications/scheduler_eval",
 
