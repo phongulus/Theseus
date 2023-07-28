@@ -40,6 +40,8 @@ use threadtest::{OBJSIZE, LARGE_SIZE, do_threadtest};
 mod shbench;
 use shbench::{MAX_BLOCK_SIZE, MIN_BLOCK_SIZE, MAX_LARGE, MIN_LARGE, do_shbench};
 
+mod alloconly;
+
 const ITERATIONS: u64 = 10_000;
 const TRIES: u64 = 10;
 const CAPACITY: [usize; 10] = [8,16,32,64,128,256,512,1024,2048,4096];
@@ -60,6 +62,7 @@ pub fn main(args: Vec<String>) -> isize {
     opts.optflag("", "qptrie", "run the test with a qp-trie as the heap based data structure");
     opts.optflag("", "threadtest", "run the threadtest heap benchmark");
     opts.optflag("", "shbench", "run the shbench heap benchmark");
+    opts.optflag("", "alloconly", "run the alloconly heap benchmark");
     opts.optflag("", "large", "run threadtest or shbench for large allocations");
 
 
@@ -137,6 +140,17 @@ fn rmain(matches: Matches) -> Result<(), &'static str> {
             shbench::NITERATIONS.store(1, Ordering::SeqCst);
         }
         do_shbench()?;
+    }
+    else if matches.opt_present("alloconly") {
+        if let Some(iterations) = matches.opt_str("i").and_then(|i| i.parse::<usize>().ok()) {
+            alloconly::NITERATIONS.store(iterations, Ordering::SeqCst);
+        }
+        if matches.opt_present("large") {
+            alloconly::MAX_BLOCK_SIZE.store(alloconly::MAX_LARGE, Ordering::SeqCst);
+            alloconly::MIN_BLOCK_SIZE.store(alloconly::MIN_LARGE, Ordering::SeqCst);
+            alloconly::NITERATIONS.store(1, Ordering::SeqCst);
+        }
+        alloconly::do_alloconly()?;
     }
     else {
         return Err("Unknown command")
