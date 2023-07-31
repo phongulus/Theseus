@@ -53,7 +53,7 @@ pub fn nr_tasks_in_rq(cpu: CpuId) -> Option<usize> {
 /// Used to verify if there are any other tasks than the current task and idle task in the runqueue
 pub fn check_myrq() -> bool {
 	match nr_tasks_in_rq(CPU_ID!()) {
-		Some(2) => { true }
+		Some(1) => { true }
 		_ => { false }
 	}
 }
