@@ -67,37 +67,39 @@ fn make_trailing_zeros_u64(k: usize) -> u64 {
 #[ensures(forall(|k: usize| k < result ==> is_allocated_u64(u, k)))]  // All bits before the result should be set.
 #[ensures(result < 64 ==> !is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
 fn my_trailing_ones(u: &u64) -> usize {
-    let mut k = 0;
-    while k < 64 {
-        body_invariant!(k < 64);
-        body_invariant!(forall(|j: usize| j < k ==> is_allocated_u64(u, j)));
-        if !is_allocated_u64(u, k) {
-            prusti_assert!(k < 64);
-            prusti_assert!(*u < u64::MAX);
-            break;
-        }
-        prusti_assert!(is_allocated_u64(u, k));
-        prusti_assert!(forall(|j: usize| j <= k ==> is_allocated_u64(u, j)));
-        prusti_assert!(k == 63 ==> forall(|j: usize| j < 64 ==> is_allocated_u64(u, j)));
-        k += 1
-    };
-    prusti_assert!(k == 64 ==> *u == u64::MAX);
-    prusti_assert!(k < 64 ==> !is_allocated_u64(u, k));
-    k
+    u.trailing_ones() as usize
+    // let mut k = 0;
+    // while k < 64 {
+    //     body_invariant!(k < 64);
+    //     body_invariant!(forall(|j: usize| j < k ==> is_allocated_u64(u, j)));
+    //     if !is_allocated_u64(u, k) {
+    //         prusti_assert!(k < 64);
+    //         prusti_assert!(*u < u64::MAX);
+    //         break;
+    //     }
+    //     prusti_assert!(is_allocated_u64(u, k));
+    //     prusti_assert!(forall(|j: usize| j <= k ==> is_allocated_u64(u, j)));
+    //     prusti_assert!(k == 63 ==> forall(|j: usize| j < 64 ==> is_allocated_u64(u, j)));
+    //     k += 1
+    // };
+    // prusti_assert!(k == 64 ==> *u == u64::MAX);
+    // prusti_assert!(k < 64 ==> !is_allocated_u64(u, k));
+    // k
 }
 
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
 #[ensures(forall(|k: usize| k < result ==> !is_allocated_u64(u, k)))]  // All bits before the result should be cleared.
 #[ensures(result < 64 ==> is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
 fn my_trailing_zeros(u: &u64) -> usize {
-    let mut k = 0;
-    while k < 64 {
-        body_invariant!(k < 64);
-        body_invariant!(forall(|j: usize| j < k ==> !is_allocated_u64(u, j)));
-        if is_allocated_u64(u, k) {break;}
-        prusti_assert!(!is_allocated_u64(u, k));
-        k += 1
-    }; k
+    u.trailing_zeros() as usize
+    // let mut k = 0;
+    // while k < 64 {
+    //     body_invariant!(k < 64);
+    //     body_invariant!(forall(|j: usize| j < k ==> !is_allocated_u64(u, j)));
+    //     if is_allocated_u64(u, k) {break;}
+    //     prusti_assert!(!is_allocated_u64(u, k));
+    //     k += 1
+    // }; k
 }
 
 #[requires(bitfield.len() > 0)]
