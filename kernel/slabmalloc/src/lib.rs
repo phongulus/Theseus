@@ -25,6 +25,7 @@
 
 #[macro_use] extern crate log;
 extern crate memory;
+extern crate prusti_contracts;
 
 mod pages;
 mod sc;

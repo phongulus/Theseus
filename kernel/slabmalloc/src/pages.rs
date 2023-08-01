@@ -1,5 +1,456 @@
 use crate::*;
 use core::sync::atomic::{AtomicU64, Ordering};
+use prusti_contracts::*;
+
+#[allow(dead_code)]
+#[pure]
+#[trusted]
+#[requires(k < 64)]
+#[ensures(k == 0 ==> result == 1)]
+#[ensures(result > 0)]  // This is the case when k < 64, as the single 1 cannot be shifted out.
+#[ensures(result < u64::MAX)]  // Follows from u64::MAX being a sum of unique powers of 2
+fn power_of_two_u64(k: usize) -> u64 {
+    1 << (k as u64)
+}
+
+#[pure]
+#[trusted]
+#[requires(idx < 64)]
+#[ensures(forall(|i: usize| i < 64 ==> is_allocated_u64(u, i)) ==> *u == u64::MAX)]  // If all bits are set, u should be u64::MAX.
+#[ensures(!result ==> *u < u64::MAX)]  // If any bit is not set, u should be less than u64::MAX.
+fn is_allocated_u64(u: &u64, idx: usize) -> bool {
+    *u & (1 << idx) > 0
+}
+
+#[trusted]
+#[requires(idx < 64)]
+#[ensures({  // If the bit is previously set, there should be no change to u.
+    is_allocated_u64(old(&u.0), idx) <==> old(u.0) == u.0
+})]
+#[ensures({  // If the bit is not set, u should be changed to u + 2^idx.
+    let p = power_of_two_u64(idx);
+    !is_allocated_u64(old(&u.0), idx) ==> old(u.0) + p == u.0
+})]
+#[ensures(is_allocated_u64(&u.0, idx))]  // Regardless of whether u is updated or not, the bit should be 1 when the function returns.
+fn set_bit_atomic_u64(u: &AtomicU64, idx: usize) {
+    u.fetch_or(1 << idx, Ordering::Relaxed);
+}
+
+#[trusted]
+#[requires(idx < 64)]
+#[ensures({  // If the bit is previously cleared, there should be no change to u.
+    !is_allocated_u64(old(&u.0), idx) ==> old(u.0) == u.0
+})]
+#[ensures({  // If the bit is set, u should be changed to u - 2^idx.
+    let p = power_of_two_u64(idx);
+    is_allocated_u64(old(&u.0), idx) ==> old(u.0) - p == u.0
+})]
+#[ensures(!is_allocated_u64(&u.0, idx))]  // Regardless of whether u is updated or not, the bit should be 0 when the function returns.
+fn clear_bit_atomic_u64(u: &AtomicU64, idx: usize) {
+    u.fetch_and(!(1 << idx), Ordering::Relaxed);
+}
+
+#[pure]
+#[trusted]
+#[requires(k <= 64)]
+#[ensures(k == 0 ==> result == u64::MAX)]  // If k == 0, all bits should be set.
+#[ensures(k == 64 ==> result == 0)]       // If k == 64, all bits should be cleared.
+#[ensures(forall(|j: usize| j < k ==> !is_allocated_u64(&result, j)))]  // All bits before the kth bit should be cleared.
+#[ensures(forall(|j: usize| j >= k && j < 64 ==> is_allocated_u64(&result, j)))]  // All bits including and after the kth bit should be set.
+fn make_trailing_zeros_u64(k: usize) -> u64 {
+    if k == 64 {0}
+    else {u64::MAX << k}
+}
+
+#[ensures(result <= 64)]  // The result should be within the range of the u64.
+#[ensures(*u < u64::MAX ==> result < 64)]  // If u is not u64::MAX, the result should be less than 64.
+#[ensures(forall(|k: usize| k < result ==> is_allocated_u64(u, k)))]  // All bits before the result should be set.
+#[ensures(result < 64 ==> !is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
+fn my_trailing_ones(u: &u64) -> usize {
+    let mut k = 0;
+    while k < 64 {
+        body_invariant!(k < 64);
+        body_invariant!(forall(|j: usize| j < k ==> is_allocated_u64(u, j)));
+        if !is_allocated_u64(u, k) {
+            prusti_assert!(k < 64);
+            prusti_assert!(*u < u64::MAX);
+            break;
+        }
+        prusti_assert!(is_allocated_u64(u, k));
+        prusti_assert!(forall(|j: usize| j <= k ==> is_allocated_u64(u, j)));
+        prusti_assert!(k == 63 ==> forall(|j: usize| j < 64 ==> is_allocated_u64(u, j)));
+        k += 1
+    };
+    prusti_assert!(k == 64 ==> *u == u64::MAX);
+    prusti_assert!(k < 64 ==> !is_allocated_u64(u, k));
+    k
+}
+
+#[ensures(result <= 64)]  // The result should be within the range of the u64.
+#[ensures(forall(|k: usize| k < result ==> !is_allocated_u64(u, k)))]  // All bits before the result should be cleared.
+#[ensures(result < 64 ==> is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
+fn my_trailing_zeros(u: &u64) -> usize {
+    let mut k = 0;
+    while k < 64 {
+        body_invariant!(k < 64);
+        body_invariant!(forall(|j: usize| j < k ==> !is_allocated_u64(u, j)));
+        if is_allocated_u64(u, k) {break;}
+        prusti_assert!(!is_allocated_u64(u, k));
+        k += 1
+    }; k
+}
+
+#[requires(bitfield.len() > 0)]
+#[requires(relevant_bits > 0)]
+#[requires(relevant_bits <= bitfield.len() * 64)]  // Relevant bits within array bounds.
+#[ensures(bitfield.len() == old(bitfield.len()))]  // No change to the length of the u64 array.
+#[ensures(forall(|i: usize| ((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0)))]  // All relevant bits in u64's before the one containing the final relevant bit must be set to 0.
+#[ensures(forall(|i: usize| (i < bitfield.len() && i * 64 >= relevant_bits ==> bitfield[i].0 == u64::MAX)))] // All bits after the u64 containing the final relevant bit must be set to allocated.
+#[ensures(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==>  // The u64 containing the final relevant bit is set correctly.
+    forall(|k: usize| (k < relevant_bits - j * 64 ==> !is_allocated_u64(&bitfield[j].0, k)))
+)))]
+#[ensures(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+    forall(|k: usize| (k >= relevant_bits - j * 64 && k < 64 ==> is_allocated_u64(&bitfield[j].0, k)))
+)))]
+fn initialize(bitfield: &[AtomicU64], relevant_bits: usize) {
+    let mut i: usize = 0;
+    let zero_u64 = 0u64;  // Prusti requires these to be variables, not constants.
+    let max_u64 = u64::MAX;
+    while i < bitfield.len() {
+
+        body_invariant!(i < bitfield.len());
+        body_invariant!(bitfield.len() == old(bitfield.len()));
+        body_invariant!(i * 64 < relevant_bits ==> forall(|j: usize| j < i ==> bitfield[j].0 == 0));
+        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == 0)));
+        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| (j * 64 >= relevant_bits && j < i ==> bitfield[j].0 == u64::MAX)));
+        body_invariant!(i * 64 >= relevant_bits ==> 
+            forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+                forall(|k: usize| k < (relevant_bits - j * 64) ==> !is_allocated_u64(&bitfield[j].0, k))    
+            ))
+        );
+        body_invariant!(i * 64 >= relevant_bits ==> 
+            forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+                forall(|k: usize| k >= (relevant_bits - j * 64) && k < 64 ==> is_allocated_u64(&bitfield[j].0, k))    
+            ))
+        );
+
+        let bit_idx = i * 64;
+        if bit_idx <= relevant_bits {
+            let remaining_bits = relevant_bits - bit_idx;
+            if remaining_bits >= 64 {bitfield[i].store(zero_u64, Ordering::Relaxed);}
+            else {
+                bitfield[i].store(make_trailing_zeros_u64(remaining_bits), Ordering::Relaxed);
+                prusti_assert!(forall(|j: usize| j < remaining_bits ==> !is_allocated_u64(&bitfield[i].0, j)));
+                prusti_assert!(forall(|j: usize| (j >= remaining_bits && j < 64) ==> is_allocated_u64(&bitfield[i].0, j)));
+            }
+        } else {
+            bitfield[i].store(max_u64, Ordering::Relaxed);
+            prusti_assert!(i * 64 >= relevant_bits);
+            prusti_assert!(bitfield[i].0 == u64::MAX);
+        }
+
+        prusti_assert!(i * 64 >= relevant_bits ==> bitfield[i].0 == u64::MAX);
+        prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0);
+        prusti_assert!(i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits ==>
+            forall(|j: usize| j < relevant_bits - bit_idx ==> !is_allocated_u64(&bitfield[i].0, j)));
+        prusti_assert!(i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits ==>
+            forall(|j: usize| j >= relevant_bits - bit_idx && j < 64 ==> is_allocated_u64(&bitfield[i].0, j)));
+
+        i += 1;
+    }
+    prusti_assert!(i > 0);
+    prusti_assert!(i == bitfield.len());
+    prusti_assert!(forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == 0)));
+    prusti_assert!(forall(|j: usize| (j * 64 >= relevant_bits && j < bitfield.len() ==> bitfield[j].0 == u64::MAX)));
+    prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+        forall(|k: usize| (k < relevant_bits - j * 64 ==> !is_allocated_u64(&bitfield[j].0, k)))
+    )));
+    prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+        forall(|k: usize| (k >= relevant_bits - j * 64 && k < 64 ==> is_allocated_u64(&bitfield[j].0, k)))
+    )));
+}
+
+#[pure]
+#[requires(bitfield.len() > 0)]
+#[ensures(result.is_some() ==> peek_option(&result) ==> is_allocated_u64(&bitfield[idx / 64].0, idx % 64))]
+fn is_allocated(bitfield: &[AtomicU64], idx: usize) -> Option<bool> {
+    if idx < bitfield.len() * 64 {
+        Some(is_allocated_u64(&bitfield[idx / 64].load(Ordering::Relaxed), idx % 64))
+    } else {None}
+}
+
+#[requires(bitfield.len() > 0)]
+#[requires(relevant_bits <= bitfield.len() * 64)]
+#[requires(relevant_bits > 0)]
+#[ensures(!result ==> exists(|i: usize| (  // If the bitfield is not full, there must be at least one bit within the relevant_bits range that is not set.
+    ((i + 1) * 64 <= relevant_bits && bitfield[i].0 != u64::MAX) ||
+    (i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits &&
+        exists(|j: usize| j < relevant_bits - i * 64 ==> !is_allocated_u64(&bitfield[i].0, j)))
+)))]
+#[ensures(result ==> forall(|i: usize| ((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == u64::MAX)))]  // If the bitfield is full, all u64's before the one containing the last relevant bit must be set to u64::MAX.
+#[ensures(result ==> forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==>  // If the bitfield is full, the u64 containing the last relevant bit must be set correctly (all bits before the last relevant bit are set to 1).
+    forall(|k: usize| (k < relevant_bits - j * 64 ==> is_allocated_u64(&bitfield[j].0, k)))
+)))]
+fn is_full(bitfield: &[AtomicU64], relevant_bits: usize) -> bool {
+    let mut i = 0;
+    while i < bitfield.len() {
+
+        body_invariant!(i < bitfield.len());
+        body_invariant!(i * 64 < relevant_bits ==> forall(|j: usize| j < i ==> bitfield[j].0 == u64::MAX));
+        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == u64::MAX)));
+        body_invariant!(i * 64 >= relevant_bits ==> 
+            forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+                forall(|k: usize| k < (relevant_bits - j * 64) ==> is_allocated_u64(&bitfield[j].0, k))    
+            ))
+        );
+        
+        let bit_idx = i * 64;
+        if bit_idx <= relevant_bits {
+            let remaining_bits = relevant_bits - bit_idx;
+            if remaining_bits >= 64 {if bitfield[i].load(Ordering::Relaxed) != u64::MAX {return false;}}
+            else if my_trailing_ones(&bitfield[i].load(Ordering::Relaxed)) < remaining_bits {return false;}
+            else {
+                prusti_assert!(forall(|j: usize| j < remaining_bits ==> is_allocated_u64(&bitfield[i].0, j)));
+            }
+        } else {}
+
+        prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == u64::MAX);
+        prusti_assert!(i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits ==>
+            forall(|j: usize| j < relevant_bits - bit_idx ==> is_allocated_u64(&bitfield[i].0, j)));
+        
+        i += 1;
+    }
+    prusti_assert!(i > 0);
+    prusti_assert!(i == bitfield.len());
+    prusti_assert!(forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == u64::MAX)));
+    prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+        forall(|k: usize| (k < relevant_bits - j * 64 ==> is_allocated_u64(&bitfield[j].0, k)))
+    )));
+
+    true
+}
+
+#[requires(bitfield.len() > 0)]
+#[requires(relevant_bits <= bitfield.len() * 64)]
+#[requires(relevant_bits > 0)]
+#[ensures(!result ==> exists(|i: usize| (  // If the bitfield is not empty, there must be at least one bit within the relevant_bits range that is set.
+    ((i + 1) * 64 <= relevant_bits && bitfield[i].0 > 0) ||
+    (i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits &&
+        exists(|j: usize| j < relevant_bits - i * 64 ==> is_allocated_u64(&bitfield[i].0, j)))
+)))]
+#[ensures(result ==> forall(|i: usize| ((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0)))]  // If the bitfield is empty, all u64's before the one containing the last relevant bit must be set to 0.
+#[ensures(result ==> forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==>  // If the bitfield is empty, the u64 containing the last relevant bit must be set correctly (all bits before the last relevant bit are set to 0).
+    forall(|k: usize| (k < relevant_bits - j * 64 ==> !is_allocated_u64(&bitfield[j].0, k)))
+)))]
+fn all_free(bitfield: &[AtomicU64], relevant_bits: usize) -> bool {
+    let mut i = 0;
+    while i < bitfield.len() {
+
+        body_invariant!(i < bitfield.len());
+        body_invariant!(bitfield.len() == old(bitfield.len()));
+        body_invariant!(i * 64 <= relevant_bits ==> forall(|j: usize| (j < i ==> bitfield[j].0 == 0)));
+        body_invariant!(i * 64 >= relevant_bits ==> forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == 0)));
+        body_invariant!(i * 64 >= relevant_bits ==> 
+            forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+                forall(|k: usize| k < (relevant_bits - j * 64) ==> !is_allocated_u64(&bitfield[j].0, k))    
+            ))
+        );
+
+        let bit_idx = i * 64;
+        if bit_idx <= relevant_bits {
+            let remaining_bits = relevant_bits - bit_idx;
+            if remaining_bits >= 64 {if bitfield[i].load(Ordering::Relaxed) != 0 {return false;}}
+            else {
+                let tz = my_trailing_zeros(&bitfield[i].load(Ordering::Relaxed));
+                if tz < remaining_bits {
+                    prusti_assert!(tz < 64);
+                    prusti_assert!(is_allocated_u64(&bitfield[i].0, tz));
+                    prusti_assert!(exists(|j: usize| j < remaining_bits && is_allocated_u64(&bitfield[i].0, j)));
+                    return false;
+                }
+                else {
+                    prusti_assert!(forall(|j: usize| j < tz ==> !is_allocated_u64(&bitfield[i].0, j)));
+                    prusti_assert!(remaining_bits <= tz);
+                    prusti_assert!(forall(|j: usize| j < remaining_bits ==> !is_allocated_u64(&bitfield[i].0, j)));
+                }
+            }
+        } else {}
+
+        prusti_assert!((i + 1) * 64 <= relevant_bits ==> bitfield[i].0 == 0);
+        prusti_assert!(i * 64 < relevant_bits && (i + 1) * 64 > relevant_bits ==>
+            forall(|j: usize| j < relevant_bits - bit_idx ==> !is_allocated_u64(&bitfield[i].0, j)));
+
+        i += 1;
+    }
+    prusti_assert!(i > 0);
+    prusti_assert!(i == bitfield.len());
+    prusti_assert!(forall(|j: usize| ((j + 1) * 64 <= relevant_bits ==> bitfield[j].0 == 0)));
+    prusti_assert!(forall(|j: usize| (j * 64 < relevant_bits && (j + 1) * 64 > relevant_bits ==> 
+        forall(|k: usize| (k < relevant_bits - j * 64 ==> !is_allocated_u64(&bitfield[j].0, k)))
+    )));
+
+    true
+}
+
+#[ensures(idx < bitfield.len() * 64 ==> {  // Check that the bitfield isn't changed if the bit
+    let base_idx = idx / 64;               // is already 0.
+    let bit_idx = idx % 64;
+    !is_allocated_u64(old(&bitfield[base_idx].0), bit_idx) ==>
+        bitfield[base_idx].0 == old(bitfield[base_idx].0)
+})]
+#[ensures(idx < bitfield.len() * 64 ==> {  // Check that the bitfield value decreased if the bit
+    let base_idx = idx / 64;               // was previously set to 1.
+    let bit_idx = idx % 64;
+    is_allocated_u64(old(&bitfield[base_idx].0), bit_idx) ==>
+        bitfield[base_idx].0 < old(bitfield[base_idx].0)
+})]
+#[ensures(idx < bitfield.len() * 64 ==> {  // Check that the correct bit was flipped.
+    let base_idx = idx / 64;
+    let bit_idx = idx % 64;
+    let p = power_of_two_u64(bit_idx);
+    is_allocated_u64(old(&bitfield[base_idx].0), bit_idx) ==>
+        old(bitfield[base_idx].0) - bitfield[base_idx].0 == p
+})]
+fn clear_bit(bitfield: &[AtomicU64], idx: usize) -> bool {
+    if idx >= bitfield.len() * 64 {return false}
+    let base_idx = idx / 64;
+    let bit_idx = idx % 64;
+    clear_bit_atomic_u64(&bitfield[base_idx], bit_idx);
+    true
+}
+
+#[ensures(idx < bitfield.len() * 64 ==> {  // Check that the bitfield isn't changed if the bit
+    let base_idx = idx / 64;               // is already set.
+    let bit_idx = idx % 64;
+    is_allocated_u64(old(&bitfield[base_idx].0), bit_idx) ==> bitfield[base_idx].0 == old(bitfield[base_idx].0)
+})]
+#[ensures(idx < bitfield.len() * 64 ==> {  // Check that the bitfield value increased if the bit
+    let base_idx = idx / 64;               // wasn't previously set.
+    let bit_idx = idx % 64;
+    !is_allocated_u64(old(&bitfield[base_idx].0), bit_idx) ==> bitfield[base_idx].0 > old(bitfield[base_idx].0)
+})]
+#[ensures(idx < bitfield.len() * 64 ==> {  // Check that the correct bit was flipped.
+    let base_idx = idx / 64;
+    let bit_idx = idx % 64;
+    let p = power_of_two_u64(bit_idx);
+    !is_allocated_u64(old(&bitfield[base_idx].0), bit_idx) ==> bitfield[base_idx].0 - old(bitfield[base_idx].0) == p
+})]
+fn set_bit(bitfield: &[AtomicU64], idx: usize) -> bool {
+    if idx >= bitfield.len() * 64 {return false}
+    let base_idx = idx / 64;
+    let bit_idx = idx % 64;
+    set_bit_atomic_u64(&bitfield[base_idx], bit_idx);
+    true
+}
+
+#[requires(u < u64::MAX)]
+#[ensures(result < 64)]  // Correct range for result
+#[ensures(!is_allocated_u64(&u, result))] // Check that the result index is available
+#[ensures(forall(|j: usize| j < result ==> is_allocated_u64(&u, j)))]  // Check that the result index is the first one available (all previous indices allocated)
+fn first_fit_idx(u: u64) -> usize {
+    let i = my_trailing_ones(&u);
+    prusti_assert!(i < 64);
+    prusti_assert!(!is_allocated_u64(&u, i));
+    prusti_assert!(forall(|j: usize| j < i ==> is_allocated_u64(&u, j)));
+    i
+}
+
+#[requires(layout_size > 0)]
+#[requires(layout_align > 0)]
+#[requires(u < u64::MAX)]
+#[ensures(result.is_some() ==> {  // The returned index should within the bounds of the current u64.
+    let (idx, addr) = peek_option(&result);
+    idx >= base_idx * 64 && idx < base_idx * 64 + 64
+})]
+#[ensures(result.is_some() ==> {  // The index is mapped to the correct address.
+    let (idx, addr) = peek_option(&result);
+    addr == base_addr + idx * layout_size
+})]
+#[ensures(result.is_some() ==> {  // Check that the returned address does not overlap with metadata. 
+    let (idx, addr) = peek_option(&result);
+    addr - base_addr <= page_size - metadata_size - layout_size && addr % layout_align == 0
+})]
+#[ensures(result.is_some() ==> {  // Check that the result index is available
+    let (idx, addr) = peek_option(&result);
+    !is_allocated_u64(&u, idx - base_idx * 64)
+})]
+#[ensures(result.is_some() ==> {  // Check that the result index is the first one available (all previous indices allocated)
+    let (idx, addr) = peek_option(&result);
+    forall(|j: usize| j < idx - base_idx * 64 ==> is_allocated_u64(&u, j))
+})]
+fn first_fit_in_u64 (
+    u: u64,
+    base_idx: usize,
+    base_addr: usize,
+    layout_size: usize,
+    layout_align: usize,
+    page_size: usize,
+    metadata_size: usize
+) -> Option<(usize, usize)> {
+    let first_free = first_fit_idx(u);
+    let idx = base_idx * 64 + first_free;
+    let offset = idx * layout_size;
+    let addr = base_addr + offset;
+    if offset <= (page_size - metadata_size - layout_size) && addr % layout_align == 0 {
+        Some((idx, addr))
+    } else {None}
+}
+
+#[requires(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 <= u64::MAX))]
+#[requires(layout_size > 0)]
+#[ensures(result.is_some() ==> {  // Check that the returned index is within range and that the address is correct.
+    let (idx, addr) = peek_option(&result);
+    idx < bitfield.len() * 64 && addr == base_addr + idx * layout_size
+})]
+#[ensures(result.is_some() ==> {  // Check that the returned address does not overlap with metadata.
+    let (idx, addr) = peek_option(&result);
+    addr - base_addr <= page_size - metadata_size - layout_size && addr % layout_align == 0
+})]
+#[ensures(result.is_some() ==> {  // Ensure that all u64 before the returned index is full. The result being the first free bit of its u64 is already guaranteed by `first_fit_in_u64`.
+    let (idx, addr) = peek_option(&result);
+    let base_idx = idx / 64;
+    forall(|i: usize| i < base_idx ==> bitfield[i].0 == u64::MAX)
+})]
+#[ensures(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 == u64::MAX) ==> !result.is_some())]  // No result if the bitfield is full.
+#[ensures(result.is_some() ==> {  // Check that the result index is available
+    let (idx, addr) = peek_option(&result);
+    !is_allocated_u64(&bitfield[idx / 64].0, idx % 64)
+})]
+#[ensures(result.is_some() ==> {  // Check that the result index is the first one available in the u64 containing it (all previous indices allocated)
+    let (idx, addr) = peek_option(&result);
+    forall(|j: usize| j < idx % 64 ==> is_allocated_u64(&bitfield[idx / 64].0, j))
+})]
+fn first_fit(
+    bitfield: &[AtomicU64],
+    base_addr: usize,
+    layout_size: usize,
+    layout_align: usize,
+    page_size: usize,
+    metadata_size: usize
+) -> Option<(usize, usize)> {
+    if layout_align == 0 {return None};
+    let mut base_idx = 0;
+    while base_idx < bitfield.len() {
+
+        body_invariant!(base_idx < bitfield.len());
+        body_invariant!(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 <= u64::MAX));
+        body_invariant!(forall(|i: usize| i < base_idx ==> bitfield[i].0 == u64::MAX));  // All previous u64 must have max value
+
+        let current_val = bitfield[base_idx].load(Ordering::Relaxed);
+        if current_val < u64::MAX {
+            return first_fit_in_u64(current_val, base_idx, base_addr, layout_size, layout_align, page_size, metadata_size)
+        }
+
+        prusti_assert!(current_val == u64::MAX);
+        prusti_assert!(forall(|i: usize| i <= base_idx ==> bitfield[i].0 == u64::MAX));
+
+        base_idx += 1;
+    }
+
+    prusti_assert!(forall(|i: usize| i < bitfield.len() ==> bitfield[i].0 == u64::MAX));
+
+    None
+}
 
 /// A trait defining bitfield operations we need for tracking allocated objects within a page.
 pub(crate) trait Bitfield {
@@ -31,23 +482,59 @@ impl Bitfield for [AtomicU64] {
     ///
     /// Ensures that we only have free slots for what we can allocate
     /// within the page (by marking everything else allocated).
-    fn initialize(&mut self, for_size: usize, capacity: usize) {
-        // Set everything to allocated
-        for bitmap in self.iter_mut() {
-            *bitmap = AtomicU64::new(u64::max_value());
-        }
+    // fn initialize(&mut self, for_size: usize, capacity: usize) {
+    //     // Set everything to allocated
+    //     for bitmap in self.iter_mut() {
+    //         *bitmap = AtomicU64::new(u64::max_value());
+    //     }
 
-        // Mark actual slots as free
-        let relevant_bits = core::cmp::min(capacity / for_size, self.len() * 64);
-        for idx in 0..relevant_bits {
-            self.clear_bit(idx);
-        }
+    //     // Mark actual slots as free
+    //     let relevant_bits = core::cmp::min(capacity / for_size, self.len() * 64);
+    //     for idx in 0..relevant_bits {
+    //         self.clear_bit(idx);
+    //     }
+    // }
+    fn initialize(&mut self, for_size: usize, capacity: usize) {
+        initialize(self, core::cmp::min(capacity / for_size, self.len() * 64))
     }
 
     /// Tries to find a free block of memory that satisfies `alignment` requirement.
     ///
     /// # Notes
     /// * We pass size here to be able to calculate the resulting address within `data`.
+    // fn first_fit(
+    //     &self,
+    //     base_addr: usize,
+    //     layout: Layout,
+    //     page_size: usize,
+    //     metadata_size: usize
+    // ) -> Option<(usize, usize)> {
+    //     for (base_idx, b) in self.iter().enumerate() {
+    //         let bitval = b.load(Ordering::Relaxed);
+    //         if bitval == u64::max_value() {
+    //             continue;
+    //         } else {
+    //             let negated = !bitval;
+    //             let first_free = negated.trailing_zeros() as usize;
+    //             let idx: usize = base_idx * 64 + first_free;
+    //             let offset = idx * layout.size();
+
+    //             // TODO(bad): psize needs to be passed as arg
+    //             let offset_inside_data_area = offset <= (page_size - metadata_size - layout.size());
+    //             if !offset_inside_data_area {
+    //                 return None;
+    //             }
+
+    //             let addr: usize = base_addr + offset;
+    //             let alignment_ok = addr % layout.align() == 0;
+    //             let block_is_free = bitval & (1 << first_free) == 0;
+    //             if alignment_ok && block_is_free {
+    //                 return Some((idx, addr));
+    //             }
+    //         }
+    //     }
+    //     None
+    // }
     fn first_fit(
         &self,
         base_addr: usize,
@@ -55,55 +542,40 @@ impl Bitfield for [AtomicU64] {
         page_size: usize,
         metadata_size: usize
     ) -> Option<(usize, usize)> {
-        for (base_idx, b) in self.iter().enumerate() {
-            let bitval = b.load(Ordering::Relaxed);
-            if bitval == u64::max_value() {
-                continue;
-            } else {
-                let negated = !bitval;
-                let first_free = negated.trailing_zeros() as usize;
-                let idx: usize = base_idx * 64 + first_free;
-                let offset = idx * layout.size();
-
-                // TODO(bad): psize needs to be passed as arg
-                let offset_inside_data_area = offset <= (page_size - metadata_size - layout.size());
-                if !offset_inside_data_area {
-                    return None;
-                }
-
-                let addr: usize = base_addr + offset;
-                let alignment_ok = addr % layout.align() == 0;
-                let block_is_free = bitval & (1 << first_free) == 0;
-                if alignment_ok && block_is_free {
-                    return Some((idx, addr));
-                }
-            }
-        }
-        None
+        first_fit(self, base_addr, layout.size(), layout.align(), page_size, metadata_size)
     }
 
     /// Check if the bit `idx` is set.
-    #[inline(always)]
+    // #[inline(always)]
+    // fn is_allocated(&self, idx: usize) -> bool {
+    //     let base_idx = idx / 64;
+    //     let bit_idx = idx % 64;
+    //     (self[base_idx].load(Ordering::Relaxed) & (1 << bit_idx)) > 0
+    // }
     fn is_allocated(&self, idx: usize) -> bool {
-        let base_idx = idx / 64;
-        let bit_idx = idx % 64;
-        (self[base_idx].load(Ordering::Relaxed) & (1 << bit_idx)) > 0
+        is_allocated(self, idx).unwrap()
     }
 
     /// Sets the bit number `idx` in the bit-field.
-    #[inline(always)]
+    // #[inline(always)]
+    // fn set_bit(&self, idx: usize) {
+    //     let base_idx = idx / 64;
+    //     let bit_idx = idx % 64;
+    //     self[base_idx].fetch_or(1 << bit_idx, Ordering::Relaxed);
+    // }
     fn set_bit(&self, idx: usize) {
-        let base_idx = idx / 64;
-        let bit_idx = idx % 64;
-        self[base_idx].fetch_or(1 << bit_idx, Ordering::Relaxed);
+        set_bit(self, idx);
     }
 
     /// Clears bit number `idx` in the bit-field.
-    #[inline(always)]
+    // #[inline(always)]
+    // fn clear_bit(&self, idx: usize) {
+    //     let base_idx = idx / 64;
+    //     let bit_idx = idx % 64;
+    //     self[base_idx].fetch_and(!(1 << bit_idx), Ordering::Relaxed);
+    // }
     fn clear_bit(&self, idx: usize) {
-        let base_idx = idx / 64;
-        let bit_idx = idx % 64;
-        self[base_idx].fetch_and(!(1 << bit_idx), Ordering::Relaxed);
+        clear_bit(self, idx);
     }
 
     /// Checks if we could allocate more objects of a given `alloc_size` within the
@@ -115,36 +587,42 @@ impl Bitfield for [AtomicU64] {
     /// to track allocated objects). That's why this function can be simpler
     /// than it would need to be in practice.
     #[inline(always)]
+    // fn is_full(&self) -> bool {
+    //     self.iter()
+    //         .filter(|&x| x.load(Ordering::Relaxed) != u64::max_value())
+    //         .count()
+    //         == 0
+    // }
     fn is_full(&self) -> bool {
-        self.iter()
-            .filter(|&x| x.load(Ordering::Relaxed) != u64::max_value())
-            .count()
-            == 0
+        is_full(self, self.len() * 64)
     }
 
     /// Checks if the page has currently no allocations.
     ///
     /// This is called `all_free` rather than `is_emtpy` because
     /// we already have an is_empty fn as part of the slice.
+    // fn all_free(&self, relevant_bits: usize) -> bool {
+    //     for (idx, bitmap) in self.iter().enumerate() {
+    //         let checking_bit_range = (idx * 64, (idx + 1) * 64);
+    //         if relevant_bits >= checking_bit_range.0 && relevant_bits < checking_bit_range.1 {
+    //             // Last relevant bitmap, here we only have to check that a subset of bitmap is marked free
+    //             // the rest will be marked full
+    //             let bits_that_should_be_free = relevant_bits - checking_bit_range.0;
+    //             let free_mask = (1 << bits_that_should_be_free) - 1;
+    //             return (free_mask & bitmap.load(Ordering::Relaxed)) == 0;
+    //         }
+
+    //         if bitmap.load(Ordering::Relaxed) == 0 {
+    //             continue;
+    //         } else {
+    //             return false;
+    //         }
+    //     }
+
+    //     true
+    // }
     fn all_free(&self, relevant_bits: usize) -> bool {
-        for (idx, bitmap) in self.iter().enumerate() {
-            let checking_bit_range = (idx * 64, (idx + 1) * 64);
-            if relevant_bits >= checking_bit_range.0 && relevant_bits < checking_bit_range.1 {
-                // Last relevant bitmap, here we only have to check that a subset of bitmap is marked free
-                // the rest will be marked full
-                let bits_that_should_be_free = relevant_bits - checking_bit_range.0;
-                let free_mask = (1 << bits_that_should_be_free) - 1;
-                return (free_mask & bitmap.load(Ordering::Relaxed)) == 0;
-            }
-
-            if bitmap.load(Ordering::Relaxed) == 0 {
-                continue;
-            } else {
-                return false;
-            }
-        }
-
-        true
+        all_free(self, relevant_bits)
     }
 }
 

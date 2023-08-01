@@ -2789,6 +2789,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "prusti-contracts"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab8f1bbcf5cb6a88a773307727b37164c03f0586c39d4d05d1006f5ee7398fe9"
+dependencies = [
+ "prusti-contracts-proc-macros",
+]
+
+[[package]]
+name = "prusti-contracts-proc-macros"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa5778f2309a848972eb08b5b0f6b3be12aff4d99944dbcb7a9d827ff600c070"
+
+[[package]]
 name = "ps"
 version = "0.1.0"
 dependencies = [
@@ -3428,6 +3443,7 @@ version = "0.7.0"
 dependencies = [
  "log",
  "memory",
+ "prusti-contracts",
 ]
 
 [[package]]
