@@ -211,7 +211,7 @@ impl<'a, P: AllocablePage> SCAllocator<'a, P> {
         let vaddr = mp.start_address().value();
 
         // create page and store the MappedPages object
-        let page = P::new(mp, heap_id, self.size, MappedPages8k::SIZE);
+        let page = P::new(mp, heap_id, self.size, MappedPages8k::BUFFER_SIZE);
         let page_ref: &'a mut P = unsafe { core::mem::transmute(vaddr) } ; // not unsafe because the allocable page was only create by a mapped page that fits the criteria
         unsafe { (page_ref as *mut P).write(page); }
 

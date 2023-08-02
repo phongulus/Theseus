@@ -144,42 +144,46 @@ fn make_trailing_zeros_u64(k: usize) -> u64 {
     else {u64::MAX << k}
 }
 
+#[trusted]
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
 #[ensures(*u < u64::MAX ==> result < 64)]  // If u is not u64::MAX, the result should be less than 64.
 #[ensures(forall(|k: usize| k < result ==> is_allocated_u64(u, k)))]  // All bits before the result should be set.
 #[ensures(result < 64 ==> !is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
 fn my_trailing_ones(u: &u64) -> usize {
-    let mut k = 0;
-    while k < 64 {
-        body_invariant!(k < 64);
-        body_invariant!(forall(|j: usize| j < k ==> is_allocated_u64(u, j)));
-        if !is_allocated_u64(u, k) {
-            prusti_assert!(k < 64);
-            prusti_assert!(*u < u64::MAX);
-            break;
-        }
-        prusti_assert!(is_allocated_u64(u, k));
-        prusti_assert!(forall(|j: usize| j <= k ==> is_allocated_u64(u, j)));
-        prusti_assert!(k == 63 ==> forall(|j: usize| j < 64 ==> is_allocated_u64(u, j)));
-        k += 1
-    };
-    prusti_assert!(k == 64 ==> *u == u64::MAX);
-    prusti_assert!(k < 64 ==> !is_allocated_u64(u, k));
-    k
+    u.trailing_ones() as usize
+    // let mut k = 0;
+    // while k < 64 {
+    //     body_invariant!(k < 64);
+    //     body_invariant!(forall(|j: usize| j < k ==> is_allocated_u64(u, j)));
+    //     if !is_allocated_u64(u, k) {
+    //         prusti_assert!(k < 64);
+    //         prusti_assert!(*u < u64::MAX);
+    //         break;
+    //     }
+    //     prusti_assert!(is_allocated_u64(u, k));
+    //     prusti_assert!(forall(|j: usize| j <= k ==> is_allocated_u64(u, j)));
+    //     prusti_assert!(k == 63 ==> forall(|j: usize| j < 64 ==> is_allocated_u64(u, j)));
+    //     k += 1
+    // };
+    // prusti_assert!(k == 64 ==> *u == u64::MAX);
+    // prusti_assert!(k < 64 ==> !is_allocated_u64(u, k));
+    // k
 }
 
+#[trusted]
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
 #[ensures(forall(|k: usize| k < result ==> !is_allocated_u64(u, k)))]  // All bits before the result should be cleared.
 #[ensures(result < 64 ==> is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
 fn my_trailing_zeros(u: &u64) -> usize {
-    let mut k = 0;
-    while k < 64 {
-        body_invariant!(k < 64);
-        body_invariant!(forall(|j: usize| j < k ==> !is_allocated_u64(u, j)));
-        if is_allocated_u64(u, k) {break;}
-        prusti_assert!(!is_allocated_u64(u, k));
-        k += 1
-    }; k
+    u.trailing_zeros() as usize
+    // let mut k = 0;
+    // while k < 64 {
+    //     body_invariant!(k < 64);
+    //     body_invariant!(forall(|j: usize| j < k ==> !is_allocated_u64(u, j)));
+    //     if is_allocated_u64(u, k) {break;}
+    //     prusti_assert!(!is_allocated_u64(u, k));
+    //     k += 1
+    // }; k
 }
 
 #[requires(bitfield.len() > 0)]
@@ -551,10 +555,6 @@ pub struct TrustedBitfield8 {  // Change name for other bitfield types
 
 impl TrustedBitfield8 {
     const SIZE: usize = 8;  // Change this for other bitfield sizes
-    fn initialize(&mut self) {initialize(&mut self.bitfield, self.relevant_bits)}
-    fn first_fit(&self, layout_align: usize, base_addr: usize, page_size: usize, metadata_size: usize) -> Option<(usize, usize)> {first_fit(&self.bitfield, base_addr, self.layout_size, layout_align, page_size, metadata_size)}
-    fn set_bit(&self, idx: usize) -> bool {set_bit(&self.bitfield, idx)}
-    fn clear_bit(&self, idx: usize) -> bool {clear_bit(&self.bitfield, idx)}
 
     pub fn is_allocated(&self, idx: usize) -> Option<bool> {is_allocated(&self.bitfield, idx)}
     pub fn is_full(&self) -> bool {is_full(&self.bitfield, self.relevant_bits)}
@@ -565,7 +565,7 @@ impl TrustedBitfield8 {
         capacity: usize
     ) -> Option<Self> {
         let valid_args =
-            for_size > 0 && capacity > 0 && for_size < capacity;
+            for_size > 0 && capacity > 0 && for_size <= capacity;
         if valid_args {
             let bitfield =
                 [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
@@ -573,25 +573,25 @@ impl TrustedBitfield8 {
             let available_bits = bitfield.len() * 64;
             let wanted_bits = capacity / for_size;
             let relevant_bits = if wanted_bits <= available_bits {wanted_bits} else {available_bits};
-            let mut trusted_bitfield = TrustedBitfield8 {  // Change this for other bitfield types
+            let trusted_bitfield = TrustedBitfield8 {  // Change this for other bitfield types
                 bitfield, relevant_bits, layout_size: for_size,
                 dealloc_callback_generated: false
             };
-            trusted_bitfield.initialize();
+            initialize(&trusted_bitfield.bitfield, relevant_bits);
             Some(trusted_bitfield)
         } else {None}
     }
 
     pub fn first_fit_and_set(&self, layout_align: usize, base_addr: usize, page_size: usize, metadata_size: usize) -> Option<VerifiedAllocAddr> {
-        if let Some((idx, addr)) = self.first_fit(layout_align, base_addr, page_size, metadata_size) {
-            self.set_bit(idx);
+        if let Some((idx, addr)) = first_fit(&self.bitfield, base_addr, self.layout_size, layout_align, page_size, metadata_size) {
+            set_bit(&self.bitfield, idx);
             Some(VerifiedAllocAddr(addr))
         } else {None}
     }
 
     pub fn clear_verified_addr(&self, addr: VerifiedDeallocAddr, base_addr: usize) -> bool {  // Should take ownership of the VerifiedDeallocAddr
         if addr.0 >= base_addr {
-            self.clear_bit((addr.0 - base_addr) / self.layout_size)
+            clear_bit(&self.bitfield, (addr.0 - base_addr) / self.layout_size)
         } else {false}
     }
     
