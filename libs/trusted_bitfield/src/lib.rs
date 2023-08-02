@@ -144,6 +144,7 @@ fn make_trailing_zeros_u64(k: usize) -> u64 {
     else {u64::MAX << k}
 }
 
+#[trusted]
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
 #[ensures(*u < u64::MAX ==> result < 64)]  // If u is not u64::MAX, the result should be less than 64.
 #[ensures(forall(|k: usize| k < result ==> is_allocated_u64(u, k)))]  // All bits before the result should be set.
@@ -169,6 +170,7 @@ fn my_trailing_ones(u: &u64) -> usize {
     // k
 }
 
+#[trusted]
 #[ensures(result <= 64)]  // The result should be within the range of the u64.
 #[ensures(forall(|k: usize| k < result ==> !is_allocated_u64(u, k)))]  // All bits before the result should be cleared.
 #[ensures(result < 64 ==> is_allocated_u64(u, result))]  // The bit at the result position should be cleared.
@@ -567,7 +569,7 @@ impl TrustedBitfield8 {
         capacity: usize
     ) -> Option<Self> {
         let valid_args =
-            for_size > 0 && capacity > 0 && for_size < capacity;
+            for_size > 0 && capacity > 0 && for_size <= capacity;
         if valid_args {
             let bitfield =
                 [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
